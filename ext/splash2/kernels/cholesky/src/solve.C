@@ -102,27 +102,27 @@ char *argv[];
 
   CLOCK(start)
 
-  while ((c = getopt(argc, argv, "B:C:p:D:sth")) != -1) {
+  while ((c = getopt(argc, argv, "B:C:sth")) != -1) {
     switch(c) {
-    case 'B': postpass_partition_size = atoi(optarg); break;  
-    case 'C': CacheSize = (double) atoi(optarg); break;  
-    case 'p': P = atoi(optarg); break;  
-    case 's': do_stats = 1; break;  
-    case 't': do_test = 1; break;  
+    case 'B': postpass_partition_size = atoi(optarg); break;
+    case 'C': CacheSize = (double) atoi(optarg); break;
+    case 's': do_stats = 1; break;
+    case 't': do_test = 1; break;
     case 'h': printf("Usage: SCHOL <options> file\n\n");
               printf("options:\n");
               printf("  -Bb : Use a postpass partition size of b.\n");
               printf("  -Cc : Cache size in bytes.\n");
-              printf("  -pP : P = number of processors.\n");
               printf("  -s  : Print individual processor timing statistics.\n");
               printf("  -t  : Test output.\n");
               printf("  -h  : Print out command line options.\n\n");
-              printf("Default: SCHOL -p%1d -B%1d -C%1d\n",
-                     DEFAULT_P,DEFAULT_PPS,DEFAULT_CS);
+              printf("Default: SCHOL -B%1d -C%1d\n",
+                     DEFAULT_PPS,DEFAULT_CS);
               exit(0);
               break;
     }
   }
+
+  P = 1;
 
   CS = CacheSize / 8.0;
   CS = sqrt(CS);
@@ -134,9 +134,6 @@ char *argv[];
   gp->pid = 0;
   Global = (struct GlobalMemory *)
     G_MALLOC(sizeof(struct GlobalMemory), 0);
-  BARINIT(Global->start)
-  LOCKINIT(Global->waitLock)
-  LOCKINIT(Global->memLock)
 
   MallocInit(P);  
 
@@ -150,7 +147,7 @@ char *argv[];
   printf("\n");
   printf("Sparse Cholesky Factorization\n");
   printf("     Problem: %s\n",probname);
-  printf("     %d Processors\n",P);
+  printf("     1 Processor\n");
   printf("     Postpass partition size: %d\n",postpass_partition_size);
   printf("     %0.0f byte cache\n",CacheSize);
   printf("\n");
@@ -256,13 +253,7 @@ char *argv[];
   ComputeRemainingFO();
   ComputeReceivedFO();
 
-  //for (i=1; i<P; i++) {
-  CREATE(Go, P)
-  //}
-
-  //Go();
-
-  WAIT_FOR_END(P)
+  Go();
 
   printf("%.0f operations for factorization\n", work_tree[M.n]);
 
@@ -322,65 +313,34 @@ char *argv[];
 
 void Go()
 {
-  int iter;
-  int MyNum;
+  int MyNum = gp->pid++;
   struct LocalCopies *lc;
 
-  LOCK(Global->waitLock)
-    MyNum = gp->pid;
-    gp->pid++;
-  UNLOCK(Global->waitLock)
-
-/* POSSIBLE ENHANCEMENT:  Here is where one might pin processes to
-   processors to avoid migration */
-
-  lc =(struct LocalCopies *) G_MALLOC(sizeof(struct LocalCopies)+2*PAGE_SIZE,
-              			       MyNum)
+  lc = (struct LocalCopies *) G_MALLOC(sizeof(struct LocalCopies)+2*PAGE_SIZE,
+                                       MyNum);
   lc->freeUpdate = NULL;
   lc->freeTask = NULL;
   lc->runtime = 0;
 
   PreAllocateFO(MyNum,lc);
-
-    /* initialize - put original non-zeroes in L */
-
   PreProcessFO(MyNum,lc);
 
-  BARRIER(Global->start, P);
-
-/* POSSIBLE ENHANCEMENT:  Here is where one might reset the
-   statistics that one is measuring about the parallel execution */
-
-  if ((MyNum == 0) || (do_stats)) {
+  if (do_stats) {
     CLOCK(lc->rs);
   }
 
   BNumericSolveFO(MyNum,lc);
 
-  BARRIER(Global->start, P);
-
-  if ((MyNum == 0) || (do_stats)) {
+  if (do_stats) {
     CLOCK(lc->rf);
     lc->runtime += (lc->rf-lc->rs);
-  }
-
-  if (MyNum == 0) {
-    CheckRemaining();
-    CheckReceived();
-  }
-
-  BARRIER(Global->start, P);
-
-  if ((MyNum == 0) || (do_stats)) {
     Global->runtime[MyNum] = lc->runtime;
-  }
-  if (MyNum == 0) {
     gp->initdone = lc->rs;
     gp->finish = lc->rf;
-  } 
+  }
 
-  BARRIER(Global->start, P);
-
+  CheckRemaining();
+  CheckReceived();
 }
 
 

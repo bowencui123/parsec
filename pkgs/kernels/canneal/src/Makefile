@@ -1,30 +1,22 @@
-# Makefile for parallel simulated annealer
+CXX ?= g++
+CXXFLAGS ?= -O2 -std=c++11
+LDFLAGS ?=
+LIBS ?= -lm
 
-PREFIX=${PARSECDIR}/pkgs/kernels/canneal/inst/${PARSECPLAT}
+SRCS = annealer_thread.cpp rng.cpp netlist.cpp netlist_elem.cpp main.cpp
+OBJS = $(SRCS:.cpp=.o)
+TARGET = canneal
 
-TARGET=canneal
-LIBS:=$(LIBS) -lm
+all: $(TARGET)
 
-CXXFLAGS+=-O0 -g
+$(TARGET): $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) $(LDFLAGS) $(LIBS) -o $@
 
-ifdef version
-  ifeq "$(version)" "pthreads"
-    CXXFLAGS+=-DENABLE_THREADS -pthread
-  endif
-endif
-
-all:
-	$(CXX) $(CXXFLAGS) annealer_thread.cpp -c -o annealer_thread.o
-	$(CXX) $(CXXFLAGS) rng.cpp -c -o rng.o
-	$(CXX) $(CXXFLAGS) netlist.cpp -c -o netlist.o
-	$(CXX) $(CXXFLAGS) main.cpp -c -o main.o
-	$(CXX) $(CXXFLAGS) netlist_elem.cpp -c -o netlist_elem.o
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) *.o $(LIBS) -o $(TARGET)
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o $(TARGET)
+	rm -f $(OBJS) $(TARGET)
 
-install:
-	mkdir -p $(PREFIX)/bin
-	cp -f $(TARGET) $(PREFIX)/bin/$(TARGET)
+.PHONY: all clean
 

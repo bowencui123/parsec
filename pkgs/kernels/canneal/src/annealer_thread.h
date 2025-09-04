@@ -31,10 +31,6 @@
 #ifndef ANNEALER_THREAD_H
 #define ANNEALER_THREAD_H
 
-#ifdef ENABLE_THREADS
-#include <pthread.h>
-#endif
-
 #include <assert.h>
 
 #include "annealer_types.h"
@@ -62,19 +58,13 @@ public:
 	_keep_going_global_flag(true),
 	_moves_per_thread_temp(swaps_per_temp/nthreads),
 	_start_temp(start_temp),
-	_number_temp_steps(number_temp_steps)
-	{
-		assert(_netlist != NULL);
-#ifdef ENABLE_THREADS
-		pthread_barrier_init(&_barrier, NULL, nthreads);
-#endif
-	};
-	
-	~annealer_thread() {
-#ifdef ENABLE_THREADS
-		pthread_barrier_destroy(&_barrier);
-#endif
-	}					
+        _number_temp_steps(number_temp_steps)
+        {
+                assert(_netlist != NULL);
+        };
+
+        ~annealer_thread() {
+        }
 	void Run();
 					
 protected:
@@ -87,10 +77,7 @@ protected:
 	bool _keep_going_global_flag;
 	int _moves_per_thread_temp;
 	int _start_temp;
-	int _number_temp_steps;
-#ifdef ENABLE_THREADS
-	pthread_barrier_t _barrier;
-#endif
+        int _number_temp_steps;
 };
 
 #endif

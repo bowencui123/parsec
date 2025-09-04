@@ -32,24 +32,14 @@
 
 #include <vector>
 
-#ifdef ENABLE_THREADS
-#include <pthread.h>
-#endif
-
 #include "MersenneTwister.h"
 
 class Rng
 {
 public:
-	Rng() {
-#ifdef ENABLE_THREADS
-		pthread_mutex_lock(&seed_lock);
-		_rng = new MTRand(seed++);
-		pthread_mutex_unlock(&seed_lock);
-#else
-		_rng = new MTRand(seed++);
-#endif //ENABLE_THREADS
-	}
+        Rng() {
+                _rng = new MTRand(seed++);
+        }
 	~Rng() {
 		delete _rng;
 	}
@@ -58,9 +48,8 @@ public:
 	double drand();
 protected:
 	//use same random seed for each run
-	static unsigned int seed;
-	static pthread_mutex_t seed_lock;
-	MTRand *_rng;
+        static unsigned int seed;
+        MTRand *_rng;
 };
 
 #endif
