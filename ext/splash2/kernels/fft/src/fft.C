@@ -29,7 +29,6 @@
 /*  Command line options:                                                */
 /*                                                                       */
 /*  -mM : M = even integer; 2**M total complex data points transformed.  */
-/*  -pP : P = number of processors; Must be a power of 2.                */
 /*  -nN : N = number of cache lines.                                     */
 /*  -lL : L = Log base 2 of cache line length in bytes.                  */
 /*  -s  : Print individual processor timing statistics.                  */
@@ -58,8 +57,6 @@ MAIN_ENV
 
 struct GlobalMemory {
   int id;
-  LOCKDEC(idlock)
-  BARDEC(start)
   long *transtimes;
   long *totaltimes;
   long starttime;
@@ -126,19 +123,9 @@ char *argv;
 
   CLOCK(start);
 
-  while ((c = getopt(argc, argv, "p:m:n:l:stoh")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:l:stoh")) != -1) {
     switch(c) {
-      case 'p': P = atoi(optarg); 
-                if (P < 1) {
-                  printerr("P must be >= 1\n");
-                  exit(-1);
-                }
-                if (log_2(P) == -1) {
-                  printerr("P must be a power of 2\n");
-                  exit(-1);
-                }
-	        break;  
-      case 'm': M = atoi(optarg); 
+      case 'm': M = atoi(optarg);
                 m1 = M/2;
                 if (2*m1 != M) {
                   printerr("M must be even\n");
@@ -167,7 +154,6 @@ char *argv;
       case 'h': printf("Usage: FFT <options>\n\n");
                 printf("options:\n");
                 printf("  -mM : M = even integer; 2**M total complex data points transformed.\n");
-                printf("  -pP : P = number of processors; Must be a power of 2.\n");
                 printf("  -nN : N = number of cache lines.\n");
                 printf("  -lL : L = Log base 2 of cache line length in bytes.\n");
                 printf("  -s  : Print individual processor timing statistics.\n");
@@ -176,10 +162,10 @@ char *argv;
                 printf("        results from performing the FFT and inverse FFT.\n");
                 printf("  -o  : Print out complex data points.\n");
                 printf("  -h  : Print out command line options.\n\n");
-                printf("Default: FFT -m%1d -p%1d -n%1d -l%1d\n",
-                       DEFAULT_M,DEFAULT_P,NUM_CACHE_LINES,LOG2_LINE_SIZE);
-		exit(0);
-	        break;
+                printf("Default: FFT -m%1d -n%1d -l%1d\n",
+                       DEFAULT_M,NUM_CACHE_LINES,LOG2_LINE_SIZE);
+                exit(0);
+                break;
     }
   }
 
@@ -187,11 +173,7 @@ char *argv;
 
   N = 1<<M;
   rootN = 1<<(M/2);
-  rowsperproc = rootN/P;
-  if (rowsperproc == 0) {
-    printerr("Matrix not large enough. 2**(M/2) must be >= P\n");
-    exit(-1);
-  }
+  rowsperproc = rootN;
 
   line_size = 1 << log2_line_size;
   if (line_size < 2*sizeof(double)) {
@@ -283,7 +265,7 @@ char *argv;
   printf("\n");
   printf("FFT with Blocking Transpose\n");
   printf("   %d Complex Doubles\n",N);
-  printf("   %d Processors\n",P);
+  
   if (num_cache_lines != orig_num_lines) {
     printf("   %d Cache lines\n",orig_num_lines);
     printf("   %d Cache lines for blocking transpose\n",num_cache_lines);
@@ -294,8 +276,6 @@ char *argv;
   printf("   %d Bytes per page\n",PAGE_SIZE);
   printf("\n");
 
-  BARINIT(Global->start);
-  LOCKINIT(Global->idlock);
   Global->id = 0;
   InitX(N, x);                  /* place random values in x */
 
@@ -310,13 +290,8 @@ char *argv;
   InitU(N,umain);               /* initialize u arrays*/
   InitU2(N,umain2,rootN);
 
-  /* fire off P processes */
-  //for (i=1; i<P; i++) {
-  CREATE(SlaveStart, P);
-  //}
-  //SlaveStart();
-
-  WAIT_FOR_END(P)
+  /* run serial computation */
+  SlaveStart();
 
   if (doprint) {
     if (test_result) {
@@ -425,17 +400,13 @@ void SlaveStart()
   int MyFirst; 
   int MyLast;
 
-  LOCK(Global->idlock);
-    MyNum = Global->id;
-    Global->id++;
-  UNLOCK(Global->idlock); 
+  MyNum = Global->id;
+  Global->id++;
 
 /* POSSIBLE ENHANCEMENT:  Here is where one might pin processes to
    processors to avoid migration */
 
-  BARRIER(Global->start, P);
-
-  upriv = (double *) malloc(2*(rootN-1)*sizeof(double));  
+  upriv = (double *) malloc(2*(rootN-1)*sizeof(double));
   if (upriv == NULL) {
     fprintf(stderr,"Proc %d could not malloc memory for upriv\n",MyNum);
     exit(-1);
@@ -448,8 +419,6 @@ void SlaveStart()
   MyLast = rootN*(MyNum+1)/P;
 
   TouchArray(x, trans, umain2, upriv, N, MyNum, MyFirst, MyLast);
-
-  BARRIER(Global->start, P);
 
 /* POSSIBLE ENHANCEMENT:  Here is where one might reset the
    statistics that one is measuring about the parallel execution */
@@ -649,8 +618,6 @@ struct GlobalMemory *Global;
   m1 = M/2;
   n1 = 1<<m1;
 
-  BARRIER(Global->start, P);
-
   if ((MyNum == 0) || (dostats)) {
     CLOCK(clocktime1);
   }
@@ -670,8 +637,6 @@ struct GlobalMemory *Global;
 		  pad_length);
   }  
 
-  BARRIER(Global->start, P);
-
   if ((MyNum == 0) || (dostats)) {
     CLOCK(clocktime1);
   }
@@ -690,8 +655,6 @@ struct GlobalMemory *Global;
       Scale(n1, N, &x[2*j*(n1+pad_length)]);
   }
 
-  BARRIER(Global->start, P);
-
   if ((MyNum == 0) || (dostats)) {
     CLOCK(clocktime1);
   }
@@ -704,8 +667,6 @@ struct GlobalMemory *Global;
     *l_transtime += (clocktime2-clocktime1);
   }
 
-  BARRIER(Global->start, P);
-
   /* copy columns from scratch to x */
   if ((test_result) || (doprint)) {  
     for (j=MyFirst; j<MyLast; j++) {
@@ -713,7 +674,6 @@ struct GlobalMemory *Global;
     }  
   }  
 
-  BARRIER(Global->start, P);
 }
 
 

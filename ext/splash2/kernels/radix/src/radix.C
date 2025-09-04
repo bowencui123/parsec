@@ -37,7 +37,9 @@
 /*************************************************************************/
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
+#include <unistd.h>
 
 #define DEFAULT_P                    1
 #define DEFAULT_N               262144
@@ -52,22 +54,13 @@
 #define PAGE_MASK     (~(PAGE_SIZE-1))
 #define MAX_RADIX                 4096
 
-MAIN_ENV
-
 struct prefix_node {
    int densities[MAX_RADIX];
    int ranks[MAX_RADIX];
-   PAUSEDEC(done)
    char pad[PAGE_SIZE];
 };
 
 struct global_memory {
-   int Index;                             /* process ID */
-   LOCKDEC(lock_Index)                    /* for fetch and add to get ID */
-   LOCKDEC(rank_lock)                     /* for fetch and add to get ID */
-   ALOCKDEC(section_lock,MAX_PROCESSORS)  /* key locks */
-   BARDEC(barrier_rank)                   /* for ranking process */
-   BARDEC(barrier_key)                    /* for key sorting process */
    double *ranktime;
    double *sorttime;
    double *totaltime;
@@ -112,11 +105,7 @@ void test_sort(int);
 void printout();
 
 
-main(argc, argv)
-
-int argc;
-char *argv;
-
+int main(int argc, char **argv)
 {
    int i;
    int p;
@@ -124,42 +113,21 @@ char *argv;
    int remainder;
    int sum_i; 
    int sum_f;
-   int mistake=0;
    int size;
    int **temp;
    int **temp2;
    int *a;
    int c;
-   int n1;
-   extern char *optarg;
    double mint, maxt, avgt;
    double minrank, maxrank, avgrank;
    double minsort, maxsort, avgsort;
    unsigned long start;
-   int done = 0;
-   int start_p;
-   int end_p;
-   int level;
-   int index;
-   int base;
-   int offset;
-   int toffset;
 
 
    CLOCK(start)
 
-   while ((c = getopt(argc, argv, "p:r:n:m:stoh")) != -1) {
+   while ((c = getopt(argc, argv, "r:n:m:stoh")) != -1) {
      switch(c) {
-      case 'p': number_of_processors = atoi(optarg);
-                if (number_of_processors < 1) {
-                  printerr("P must be >= 1\n");
-                  exit(-1);
-                }
-                if (number_of_processors > MAX_PROCESSORS) {
-                  printerr("Maximum processors (MAX_PROCESSORS) exceeded\n"); 
-		  exit(-1);
-		}
-                break;
       case 'r': radix = atoi(optarg);
                 if (radix < 1) {
                   printerr("Radix must be a power of 2 greater than 0\n");
@@ -190,7 +158,6 @@ char *argv;
       case 'o': doprint = !doprint;
                 break;
       case 'h': printf("Usage: RADIX <options>\n\n");
-                printf("   -pP : P = number of processors.\n");
                 printf("   -rR : R = radix for sorting.  Must be power of 2.\n");
                 printf("   -nN : N = number of keys to sort.\n");
                 printf("   -mM : M = maximum key value.  Integer keys k will be generated such\n");
@@ -199,15 +166,13 @@ char *argv;
                 printf("   -t  : Check to make sure all keys are sorted correctly.\n");
                 printf("   -o  : Print out sorted keys.\n");
                 printf("   -h  : Print out command line options.\n\n");
-                printf("Default: RADIX -p%1d -n%1d -r%1d -m%1d\n",
-                        DEFAULT_P,DEFAULT_N,DEFAULT_R,DEFAULT_M);
-		exit(0);
+                printf("Default: RADIX -n%1d -r%1d -m%1d\n",
+                        DEFAULT_N,DEFAULT_R,DEFAULT_M);
+                exit(0);
      }
    }
 
-   MAIN_INITENV(,80000000)
-
-   log2_radix = log_2(radix); 
+   log2_radix = log_2(radix);
    log2_keys = log_2(num_keys);
    global = (struct global_memory *) G_MALLOC(sizeof(struct global_memory))
    key[0] = (int *) G_MALLOC(num_keys*sizeof(int));
@@ -237,17 +202,7 @@ char *argv;
    for (i=0;i<number_of_processors;i++) {
      gp[i].rank_ff = (int *) G_MALLOC(radix*sizeof(int)+PAGE_SIZE);
    }
-   LOCKINIT(global->lock_Index)
-   LOCKINIT(global->rank_lock)
-   ALOCKINIT(global->section_lock,MAX_PROCESSORS)
-   BARINIT(global->barrier_rank)
-   BARINIT(global->barrier_key)
-   
-   for (i=0; i<2*number_of_processors; i++) {
-     PAUSEINIT(global->prefix_tree[i].done);
-   }
-
-   global->Index = 0;
+   global->starttime = 0;
    max_num_digits = get_max_digits(max_key);
    printf("\n");
    printf("Integer Radix Sort\n");
@@ -323,13 +278,7 @@ char *argv;
 
    /* Fill the random-number array. */
    
-   //for (i = 1; i < number_of_processors; i++) {
-   CREATE(slave_sort, number_of_processors)
-   //}
-
-   //slave_sort();
-
-   WAIT_FOR_END(number_of_processors)
+   slave_sort();
 
    printf("\n");
    printf("                 PROCESS STATISTICS\n");
@@ -406,21 +355,16 @@ char *argv;
 
 void slave_sort()
 {
-   int i, j, k, kk, Ind;
+   int i;
    int MyNum;
    int this_key;
    int tmp;
-   int last_key;
    int loopnum;
-   double ran_num;
-   double sum;
    int shiftnum;
    int bb;
    int my_key;
    int key_start;
    int key_stop;
-   int rank_start;
-   int rank_stop;
    int from=0;
    int to=1;
    int *key_density;       /* individual processor key densities */
@@ -435,26 +379,12 @@ void slave_sort()
    int *key_from;
    int *key_to;
    int *rank_me_mynum;
-   int *rank_me_i;
    int *rank_ff_mynum;
    int stats;
-   struct prefix_node* n;
-   struct prefix_node* r;
-   struct prefix_node* l;
-   struct prefix_node* my_node;
-   struct prefix_node* their_node;
-   volatile int* prefx;
-   int index;
-   int level;
-   int base;
-   int offset;
 
    stats = dostats;
 
-   LOCK(global->lock_Index)
-     MyNum = global->Index;
-     global->Index++;
-   UNLOCK(global->lock_Index)
+   MyNum = 0;
 
 /* POSSIBLE ENHANCEMENT:  Here is where one might pin processes to
    processors to avoid migration */
@@ -465,20 +395,14 @@ void slave_sort()
 
    key_start = key_partition[MyNum];
    key_stop = key_partition[MyNum + 1];
-   rank_start = rank_partition[MyNum];
-   rank_stop = rank_partition[MyNum + 1];
-   if (rank_stop == radix) {
-     rank_stop--;
-   }
+  init(key_start,key_stop,from);
 
-   init(key_start,key_stop,from);
-
-   BARRIER(global->barrier_key, number_of_processors) 
+   /* No synchronization needed in serial version */
 
 /* POSSIBLE ENHANCEMENT:  Here is where one might reset the
    statistics that one is measuring about the parallel execution */
 
-   BARRIER(global->barrier_key, number_of_processors) 
+   /* No synchronization needed in serial version */
 
    if ((MyNum == 0) || (stats)) {
      CLOCK(time1)
@@ -513,108 +437,19 @@ void slave_sort()
        key_density[i] = key_density[i-1] + rank_me_mynum[i];  
      }
 
-     BARRIER(global->barrier_rank, number_of_processors)  
-
-     n = &(global->prefix_tree[MyNum]);
+     /* Compute global ranks sequentially */
      for (i = 0; i < radix; i++) {
-        n->densities[i] = key_density[i];
-        n->ranks[i] = rank_me_mynum[i];
-     }
-     offset = MyNum;
-     level = number_of_processors >> 1;
-     base = number_of_processors;
-     if ((MyNum & 0x1) == 0) {
-        SETPAUSE(global->prefix_tree[base + (offset >> 1)].done);
-     }
-     while ((offset & 0x1) != 0) {
-       offset >>= 1;
-       r = n;
-       l = n - 1;
-       index = base + offset;
-       n = &(global->prefix_tree[index]);
-       WAITPAUSE(n->done);
-       CLEARPAUSE(n->done);
-       if (offset != (level - 1)) {
-         for (i = 0; i < radix; i++) {
-           n->densities[i] = r->densities[i] + l->densities[i];
-           n->ranks[i] = r->ranks[i] + l->ranks[i];
-         }
-       } else {
-         for (i = 0; i < radix; i++) {
-           n->densities[i] = r->densities[i] + l->densities[i];
-         }
-       }
-       base += level;
-       level >>= 1;
-       if ((offset & 0x1) == 0) {
-         SETPAUSE(global->prefix_tree[base + (offset >> 1)].done);
-       }
-     }
-     BARRIER(global->barrier_rank, number_of_processors);
-
-     if (MyNum != (number_of_processors - 1)) {
-       offset = MyNum;
-       level = number_of_processors;
-       base = 0;
-       while ((offset & 0x1) != 0) {
-         offset >>= 1;
-         base += level;
-         level >>= 1;
-       }
-       my_node = &(global->prefix_tree[base + offset]);
-       offset >>= 1;
-       base += level;
-       level >>= 1;
-       while ((offset & 0x1) != 0) {
-         offset >>= 1;
-         base += level;
-         level >>= 1;
-       }
-       their_node = &(global->prefix_tree[base + offset]);
-       WAITPAUSE(my_node->done);
-       CLEARPAUSE(my_node->done);
-       for (i = 0; i < radix; i++) {
-         my_node->densities[i] = their_node->densities[i];
-       }
-     } else {
-       my_node = &(global->prefix_tree[(2 * number_of_processors) - 2]);
-     }
-     offset = MyNum;
-     level = number_of_processors;
-     base = 0;
-     while ((offset & 0x1) != 0) {
-       SETPAUSE(global->prefix_tree[base + offset - 1].done);
-       offset >>= 1;
-       base += level;
-       level >>= 1;
-     }
-     offset = MyNum;
-     level = number_of_processors;
-     base = 0;
-     for(i = 0; i < radix; i++) {
        rank_ff_mynum[i] = 0;
      }
-     while (offset != 0) {
-       if ((offset & 0x1) != 0) {
-         /* Add ranks of node to your left at this level */
-         l = &(global->prefix_tree[base + offset - 1]);
-         for (i = 0; i < radix; i++) {
-           rank_ff_mynum[i] += l->ranks[i];
-         }
-       }
-       base += level;
-       level >>= 1;
-       offset >>= 1;
-     }
      for (i = 1; i < radix; i++) {
-       rank_ff_mynum[i] += my_node->densities[i - 1];
+       rank_ff_mynum[i] = key_density[i-1];
      }
 
      if ((MyNum == 0) || (stats)) {
        CLOCK(time3);
      }
 
-     BARRIER(global->barrier_rank, number_of_processors);
+     /* No synchronization needed in serial version */
 
      if ((MyNum == 0) || (stats)) {
        CLOCK(time4);
@@ -639,7 +474,7 @@ void slave_sort()
        to = to ^ 0x1;
      }
 
-     BARRIER(global->barrier_rank, number_of_processors)
+     /* No synchronization needed in serial version */
 
      if ((MyNum == 0) || (stats)) {
        ranktime += (time3 - time2);
@@ -647,7 +482,7 @@ void slave_sort()
      }
    } /* for */
 
-   BARRIER(global->barrier_rank, number_of_processors)
+   /* No synchronization needed in serial version */
    if ((MyNum == 0) || (stats)) {
      CLOCK(time6)
      global->ranktime[MyNum] = ranktime;
@@ -809,7 +644,6 @@ int from;
 {
    double ran_num;
    double sum;
-   int tmp;
    int i;
    int *key_from;
 
@@ -824,7 +658,6 @@ int from;
       ran_num = product_mod_46(ran_num, RATIO);
       sum = sum + ran_num / RADIX;
       key_from[i] = (int) ((sum / 4.0) *  max_key);
-      tmp = (int) ((key_from[i])/100);
       ran_num = product_mod_46(ran_num, RATIO);
       sum = ran_num / RADIX;
    }
@@ -862,7 +695,6 @@ void printout()
 
 {
    int i;
-   int mistake;
    int *key_final;
 
    key_final = (int *) key[global->final];
