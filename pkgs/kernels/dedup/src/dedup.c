@@ -7,15 +7,11 @@
 #include "encoder.h"
 #include "decoder.h"
 #include "config.h"
-#include "queue.h"
 
 #ifdef ENABLE_DMALLOC
 #include <dmalloc.h>
 #endif //ENABLE_DMALLOC
 
-#ifdef ENABLE_PTHREADS
-#include <pthread.h>
-#endif //ENABLE_PTHREADS
 
 #ifdef ENABLE_PARSEC_HOOKS
 #include <hooks.h>
