@@ -60,7 +60,7 @@
 #include <string.h>
 
 #include <openssl/opensslconf.h>
-#include <openssl/sha.h>
+#include "sha.h"
 
 #undef OPENSSL_FIPS
 
